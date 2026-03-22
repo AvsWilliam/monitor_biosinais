@@ -1,92 +1,81 @@
 #include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_AHTX0.h> 
 
-#define TEMP_PIN 20
-#define HUMIDITY_PIN 21
-#define LOC_PIN 22
+#define TEMP_SDA 21
+#define TEMP_SCL 22
+#define HEARTBEAT_PIN 5
+#define LOC_PIN 35      
 
+// --- Instâncias Globais ---
+Adafruit_AHTX0 aht;
 
-// --- Configurações do Timer ---
+// --- Variáveis de Controle do Timer ---
 hw_timer_t *timer = NULL;
-volatile float ultimaLeituraTemp = 0;
-volatile float ultimaLeituraHumidity = 0;
-volatile float ultimaLeituraLocation = 0;
-volatile bool novoDadoDisponivel = false;
+volatile bool read_now = false;
 
-// Função de Interrupção (ISR) - Executada pelo Timer
+// Variáveis para armazenar as últimas leituras
+float ultimaLeituraTemp = 0;
+float ultimaLeituraHumidity = 0;
+float ultimaLeituraLocation = 0;
+float ultimaLeituraHeartbeat = 0;
+
+// Função de Interrupção (ISR)
 void IRAM_ATTR onTimer() {
-    // Lemos apenas o sensor crítico (ex: temperatura/biosinal) na interrupção
-    ultimaLeituraTemp = analogRead(TEMP_PIN);
-    ultimaLeituraHumidity = analogRead(HUMIDITY_PIN);
-    ultimaLeituraLocation = analogRead(LOC_PIN);
-    novoDadoDisponivel = true;
+    read_now = true; 
 }
 
-//Caso haja necessidade de ler os outros sensores fora da ISR.
+// Função de leitura centralizada
+void atualizarLeituras() {
+    // Leitura Digital (I2C) 
+    sensors_event_t humidity, temp;
+    if (aht.getEvent(&humidity, &temp)) {
+        ultimaLeituraTemp = temp.temperature;
+        ultimaLeituraHumidity = humidity.relative_humidity;
+    } else {
+        Serial.println("Falha ao ler o AHT10!");
+    }
 
-float read_sensors(String type) {
-    float value_get = 0.0;
-
-    if (type == "temp") {
-        value_get = analogRead(TEMP_PIN);
-    } 
-    else if (type == "humidity") {
-        value_get = analogRead(HUMIDITY_PIN);
-    }
-    else if (type == "location") {
-        value_get = analogRead(LOC_PIN);
-    }
-    else {
-        Serial.println("Tipo de sensor desconhecido!");
-    }
-    return float(value_get);
+    // Leituras Analógicas (ADC)
+    // ultimaLeituraLocation = analogRead(LOC_PIN);
+    // ultimaLeituraHeartbeat = analogRead(HEARTBEAT_PIN);
 }
-float temp(int window) {
-    for(int i = 0; i < window; i++){
-      float temp = read_sensors("temp");
-      Serial.printf("Leitura ADC: %f\n", temp);
-    }
-}
-
-float humidity(int window) {
-    for(int i = 0; i < window; i++){
-      float humidity = read_sensors("humidity");
-      Serial.printf("Leitura ADC: %f\n", humidity);
-    }
-}
-
-float location(int window) {
-    for(int i = 0; i < window; i++){
-      float location = read_sensors("location");
-      Serial.printf("Leitura ADC: %f\n", location);
-    }
-  } 
-
 
 void setup() {
-    Serial.begin(115200); // Aumentei para 115200 (padrão ESP32/Pycom)
+    Serial.begin(115200);
     
-    pinMode(TEMP_PIN, INPUT);
-    pinMode(HUMIDITY_PIN, INPUT);
+    // Inicializa I2C
+    Wire.begin(TEMP_SDA, TEMP_SCL);
+    
+    // Configura Pinos
+    pinMode(HEARTBEAT_PIN, INPUT);
     pinMode(LOC_PIN, INPUT);
 
-    // --- Configuração do Timer (Frequência de 100Hz = a cada 10ms) ---
-    // 80 é o divisor para transformar o clock de 80MHz em 1MHz (1 tique = 1us)
+    // Inicializa o sensor AHT10
+    if (!aht.begin()) {
+        Serial.println("Erro: AHT10 não encontrado! Verifique SDA(21) e SCL(22).");
+        while (1) delay(10);
+    }
+    Serial.println("AHT10 Inicializado com sucesso.");
+
+    // Configura o Timer (10 segundos)
     timer = timerBegin(0, 80, true);
     timerAttachInterrupt(timer, &onTimer, true);
-    
-    // 10000000 microssegundos = 10 segundos
     timerAlarmWrite(timer, 10000000, true);
     timerAlarmEnable(timer);
 }
 
 void loop() {
-    if(novoDadoDisponivel) {
-        noInterrupts(); // Desabilitamos interrupções para ler os dados de forma consistente
-        float tempValue = ultimaLeituraTemp;
-        float humidityValue = ultimaLeituraHumidity;
-        float locationValue = ultimaLeituraLocation;
-        interrupts(); // Reabilitamos interrupções
-        novoDadoDisponivel = false; // Resetamos a flag
-        Serial.printf("Temperatura: %f | Humidade: %f | Localização: %f\n", tempValue, humidityValue, locationValue);
+    if(read_now) {
+        read_now = false; 
+        
+        // Executa a leitura completa
+        atualizarLeituras();
+        
+        // Relatório
+        Serial.println("\n--- Relatório de Sensores ---");
+        Serial.printf("Temp: %.2f °C | Hum: %.2f %%\n", ultimaLeituraTemp, ultimaLeituraHumidity);
+        Serial.printf("Localização: %.2f | Heartbeat: %.2f\n", ultimaLeituraLocation, ultimaLeituraHeartbeat);
+        Serial.println("-----------------------------");
     }
 }
