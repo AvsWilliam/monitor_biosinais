@@ -70,7 +70,6 @@ body{
 
 .option_button{
   display:flex;
-  background-color:blue; 
   justify-content: center;
   align-items: center; 
   color: white;
