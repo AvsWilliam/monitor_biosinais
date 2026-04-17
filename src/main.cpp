@@ -1,81 +1,123 @@
 #include <Arduino.h>
 #include <Wire.h>
-#include <Adafruit_AHTX0.h> 
+#include <Adafruit_AHTX0.h>
+#include "MAX30105.h"
+#include "heartRate.h"
+#include "database_manager.h"
+#include "models.h"
+#include "wifi_manager.h"
+#include "bluetooth_manager.h"
 
-#define TEMP_SDA 21
-#define TEMP_SCL 22
-#define HEARTBEAT_PIN 5
-#define LOC_PIN 35      
-
-// --- Instâncias Globais ---
+// --- Objetos e Variáveis Globais ---
+MAX30105 particleSensor;
 Adafruit_AHTX0 aht;
 
-// --- Variáveis de Controle do Timer ---
+const byte RATE_SIZE = 4;
+byte rates[RATE_SIZE];
+byte rateSpot = 0;
+long lastBeat = 0;
+float beatsPerMinute = 0;
+int beatAvg = 0;
+
+volatile bool flagLeituraAHT = false;
 hw_timer_t *timer = NULL;
-volatile bool read_now = false;
 
-// Variáveis para armazenar as últimas leituras
-float ultimaLeituraTemp = 0;
-float ultimaLeituraHumidity = 0;
-float ultimaLeituraLocation = 0;
-float ultimaLeituraHeartbeat = 0;
-
-// Função de Interrupção (ISR)
+// Função de Interrupção do Timer
 void IRAM_ATTR onTimer() {
-    read_now = true; 
-}
-
-// Função de leitura centralizada
-void atualizarLeituras() {
-    // Leitura Digital (I2C) 
-    sensors_event_t humidity, temp;
-    if (aht.getEvent(&humidity, &temp)) {
-        ultimaLeituraTemp = temp.temperature;
-        ultimaLeituraHumidity = humidity.relative_humidity;
-    } else {
-        Serial.println("Falha ao ler o AHT10!");
-    }
-
-    // Leituras Analógicas (ADC)
-    // ultimaLeituraLocation = analogRead(LOC_PIN);
-    // ultimaLeituraHeartbeat = analogRead(HEARTBEAT_PIN);
+    flagLeituraAHT = true; 
 }
 
 void setup() {
     Serial.begin(115200);
-    
-    // Inicializa I2C
-    Wire.begin(TEMP_SDA, TEMP_SCL);
-    
-    // Configura Pinos
-    pinMode(HEARTBEAT_PIN, INPUT);
-    pinMode(LOC_PIN, INPUT);
+    Wire.begin(21, 22);
 
-    // Inicializa o sensor AHT10
+    Serial.println("--- Inicializando Sistema ---");
+
+    // 1. Inicializa Sensores
     if (!aht.begin()) {
-        Serial.println("Erro: AHT10 não encontrado! Verifique SDA(21) e SCL(22).");
-        while (1) delay(10);
+        Serial.println("Erro: AHT10 não encontrado!");
+        while (0);
     }
-    Serial.println("AHT10 Inicializado com sucesso.");
 
-    // Configura o Timer (10 segundos)
+    if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
+        Serial.println("Erro: MAX30102 não encontrado!");
+        while (0);
+    }
+    
+    particleSensor.setup();
+    particleSensor.setPulseAmplitudeRed(0x0A);
+    particleSensor.setPulseAmplitudeIR(0x0A);
+
+    // 2. Inicializa Banco de Dados (Code First)
+    if (db_init()) {
+        Serial.println("Banco de Dados SQLite OK!");
+   
+    } else {
+        Serial.println("Erro ao inicializar SQLite (verifique LittleFS).");
+    }
+    // 3. Inicializa Wi-Fi
+    // wifi_init("SEU_SSID", "SUA_SENHA");
+    // wifi_connect("SEU_SSID", "SUA_SENHA");
+    // wifi_print_status();
+    
+    // 4. Inicializa Bluetooth
+    bluetooth_init();
+
+    // 5. Configuração do Timer (10 segundos)
     timer = timerBegin(0, 80, true);
     timerAttachInterrupt(timer, &onTimer, true);
-    timerAlarmWrite(timer, 10000000, true);
+    timerAlarmWrite(timer, 10000000, true); 
     timerAlarmEnable(timer);
 }
 
 void loop() {
-    if(read_now) {
-        read_now = false; 
+    // --- PRIORIDADE 1: Monitoramento de Batimentos (Real-time) ---
+    long irValue = particleSensor.getIR();
+
+    if (checkForBeat(irValue) == true) {
+        long delta = millis() - lastBeat;
+        lastBeat = millis();
+        beatsPerMinute = 60 / (delta / 1000.0);
+
+        if (beatsPerMinute < 255 && beatsPerMinute > 20) {
+            rates[rateSpot++] = (byte)beatsPerMinute;
+            rateSpot %= RATE_SIZE;
+            
+            beatAvg = 0;
+            for (byte x = 0; x < RATE_SIZE; x++) beatAvg += rates[x];
+            beatAvg /= RATE_SIZE;
+        }
+    }
+
+    // --- PRIORIDADE 2: Persistência no Banco (A cada 10s via Timer) ---
+    if (flagLeituraAHT) {
+        sensors_event_t humidity, temp;
+        aht.getEvent(&humidity, &temp);
+
+        HealthData registro = {
+            .temperature = temp.temperature,
+            .humidity = humidity.relative_humidity,
+            .bpm = (int)beatsPerMinute,
+            .avgBpm = beatAvg,
+            .timestamp = millis() // Marcar o tempo da leitura
+        };
+
+        // Salva no SQLite e mostra no Serial
+        if (db_save_health_data(registro)) {
+            Serial.println("\n>> DADOS SALVOS NO SQLITE <<");
+            Serial.printf("Temp: %.2fC | BPM: %d\n", registro.temperature, registro.bpm);
+            db_debug_list_data(); // Mostra os últimos registros para verificação 
+            monitorar_memorias(); // Verifica uso do armazenamento
+        } else {
+            Serial.println("Erro ao salvar no banco!");
+        }
+
         
-        // Executa a leitura completa
-        atualizarLeituras();
         
-        // Relatório
-        Serial.println("\n--- Relatório de Sensores ---");
-        Serial.printf("Temp: %.2f °C | Hum: %.2f %%\n", ultimaLeituraTemp, ultimaLeituraHumidity);
-        Serial.printf("Localização: %.2f | Heartbeat: %.2f\n", ultimaLeituraLocation, ultimaLeituraHeartbeat);
-        Serial.println("-----------------------------");
+        if (irValue < 50000) {
+            Serial.println("Aviso: Sensor cardíaco sem leitura estável.");
+        }
+
+        flagLeituraAHT = false; 
     }
 }
