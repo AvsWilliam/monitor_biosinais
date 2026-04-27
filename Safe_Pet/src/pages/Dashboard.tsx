@@ -1,7 +1,7 @@
 import React from 'react';
 import '../styles/Dashboard.css';
 import {useNavigate} from 'react-router-dom'
-
+import Item from '../components/item.tsx'
 
 export default function Dashboard(){
 
@@ -60,7 +60,7 @@ export default function Dashboard(){
   				</header>
 
 				<section className="content">
-					<p>main</p>
+					<Item / >
   				</section>
   			</section>
 		</div>
