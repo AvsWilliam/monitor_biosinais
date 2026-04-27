@@ -90,3 +90,14 @@ body{
 .option_button: hover{
   background-color: pink;
 }
+
+.item{
+  display:flex;
+  justify-content: center;
+  align-items: center; 
+  color: Black;
+  height:50%;
+  width: 50%;
+  border-radius: 15px;
+  background-color: #6abce2;
+}
