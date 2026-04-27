@@ -56,7 +56,7 @@ export default function Dashboard(){
 			<section className="main">
 
 				<header className="header">
-					<p>header</p>
+					<h2>Bem-Vindo!</h2>
   				</header>
 
 				<section className="content">
