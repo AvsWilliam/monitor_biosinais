@@ -61,6 +61,8 @@ export default function Dashboard(){
 
 				<section className="content">
 					<Item / >
+					<Item / >
+					<Item / >
   				</section>
   			</section>
 		</div>
