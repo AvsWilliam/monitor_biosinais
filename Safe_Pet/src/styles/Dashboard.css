@@ -68,11 +68,15 @@ body{
 
 .content{
   display:flex;
+  padding: 40px;
+  flex-direction:row;
   grid-area:content;
   background-color:#a0e9ff; 
-  justify-content: center;
+  justify-content: left;
   align-items: center; 
   border-radius: 0px 0px 20px 0px;
+  gap:40px;
+  flex-wrap: wrap;
 }
 
 .option_button{
@@ -96,8 +100,14 @@ body{
   justify-content: center;
   align-items: center; 
   color: Black;
-  height:50%;
-  width: 50%;
+  height:45%;
+  width: 45%;
   border-radius: 15px;
   background-color: #6abce2;
 }
+
+.item: hover{
+  background-color: pink;
+
+}
+
